@@ -3,6 +3,8 @@ import random
 import sklearn.preprocessing
 import numpy as np
 import scipy.sparse as sparse
+import pickle
+
 from dateutil import parser
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
@@ -25,12 +27,20 @@ def one_hot_encode(arr):
     return np.array(label_binarizer.transform(arr))
 
 
-def vectorize_data(data):
+def vectorize_data(data, vocabs={}):
     num_instances = len(data)
     vectorized_data = sparse.csr_matrix((num_instances, 1))
-    vectorized_data = add_feature(vectorized_data, vectorize_text_field(data, 'targetTitle'))
-    vectorized_data = add_feature(vectorized_data, vectorize_text_field(data, 'targetDescription'))
-    vectorized_data = add_feature(vectorized_data, vectorize_text_field(data, 'targetKeywords'))
+
+    text_fields = ['targetTitle', 'targetDescription', 'targetKeywords']
+    for field_name in text_fields:
+        if field_name in vocabs.keys():
+            field_vocab = vocabs[field_name]
+            field_vector, _ = vectorize_text_field(data, field_name, vocab=field_vocab)
+        else:
+            field_vector, field_vocab = vectorize_text_field(data, field_name)
+            vocabs[field_name] = field_vocab
+        vectorized_data = add_feature(vectorized_data, field_vector)
+
 
     post_hours = [timestamp_to_hour(x['postTimestamp']) for x in data]
     post_hours = one_hot_encode(post_hours)
@@ -50,17 +60,20 @@ def vectorize_data(data):
         (num_instances, 1))
     vectorized_data = add_feature(vectorized_data, paragraph_len)
 
-    return vectorized_data
+    return vectorized_data, vocabs
 
 
-def vectorize_text_field(data, field_name):
-    vectorizer = CountVectorizer(min_df=1, binary=True, ngram_range=(1, 5))
+def vectorize_text_field(data, field_name, vocab=None):
+    if vocab is not None:
+        vectorizer = CountVectorizer(min_df=1, binary=True, ngram_range=(1, 5), vocabulary=vocab)
+    else:
+        vectorizer = CountVectorizer(min_df=1, binary=True, ngram_range=(1, 5))
     if type(data[0][field_name]) == list:
         corpus = [' '.join(x[field_name]) for x in data]
     else:
         corpus = [x[field_name] for x in data]
     vectorized_field = vectorizer.fit_transform(corpus)
-    return vectorized_field
+    return vectorized_field, vectorizer.vocabulary_
 
 
 def add_feature(feature_set, feature):
@@ -93,13 +106,28 @@ def balance_data(data, labels):
     return data, labels
 
 
+# https://stackoverflow.com/questions/27050108/convert-numpy-type-to-python/27050186#27050186
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        else:
+            return super(NumpyEncoder, self).default(obj)
+
+
 def main():
     data = []
-    for line in open('/home/xuri3814/data/clickbait17-train-170331/instances.jsonl'):
+    data_dir = '/home/neffle/data/clickbait/clickbait17-train-170331/'
+    # data_dir = '/home/xuri3814/data/clickbait17-train-170331/'
+    for line in open(data_dir + 'instances.jsonl'):
         data.append(json.loads(line))
 
     labels = []
-    for line in open('/home/xuri3814/data/clickbait17-train-170331/truth.jsonl'):
+    for line in open(data_dir + 'truth.jsonl'):
         labels.append(json.loads(line))
 
     if not check_data_label_alignment(data, labels):
@@ -111,8 +139,10 @@ def main():
 
     data, labels = shuffle(data, labels)
 
-    vectorized_data = vectorize_data(data).tocsr()
+    vectorized_data, vocabs = vectorize_data(data)
+    json.dump(vocabs, open(data_dir+'vocabs.json', 'w'), cls=NumpyEncoder)
     train_test_split = 2394
+    vectorized_data = vectorized_data.tocsr()
     train_data = vectorized_data[:train_test_split, :]
     test_data = vectorized_data[train_test_split:, :]
     train_labels = labels[:train_test_split]
@@ -120,6 +150,8 @@ def main():
 
     clf = RandomForestClassifier(n_estimators=10)
     clf = clf.fit(train_data, train_labels)
+
+    # pickle.dump(clf, open(data_dir+'RandomForestClassifier.pickle', 'w'))
 
     scores = cross_val_score(clf, train_data, train_labels)
     print('cross val:')
