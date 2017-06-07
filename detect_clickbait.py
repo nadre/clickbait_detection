@@ -3,7 +3,7 @@ import random
 import sklearn.preprocessing
 import numpy as np
 import scipy.sparse as sparse
-import pickle
+import time
 
 from dateutil import parser
 from sklearn.ensemble import RandomForestClassifier
@@ -11,6 +11,7 @@ from sklearn.model_selection import cross_val_score
 from sklearn.utils import shuffle
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics import roc_auc_score, confusion_matrix, classification_report
+from sklearn.externals import joblib
 
 
 def timestamp_to_hour(timestamp):
@@ -82,7 +83,7 @@ def add_feature(feature_set, feature):
 
 def check_data_label_alignment(data, labels):
     for i in range(len(data)):
-        if data[i]['id'] != labels[i]['id']:
+        if data[i]['id'] != labels[i][0]:
             return False
     return True
 
@@ -106,6 +107,66 @@ def balance_data(data, labels):
     return data, labels
 
 
+def train_and_save_clf(train_data, train_labels, file_path, cross_val=True):
+    clf = RandomForestClassifier(n_estimators=10)
+    clf = clf.fit(train_data, train_labels)
+    if cross_val:
+        scores = cross_val_score(clf, train_data, train_labels)
+        print('cross val:')
+        print(scores)
+    joblib.dump(clf, file_path)
+    return clf
+
+
+def load_clf(file_path):
+    return joblib.load(file_path)
+
+
+def evaluate_clf(clf, test_data, test_labels):
+    predicted_labels = clf.predict(test_data)
+    print('roc auc:')
+    print(roc_auc_score(predicted_labels, test_labels))
+
+    print('confusion:')
+    print(confusion_matrix(predicted_labels, test_labels))
+
+    print('report:')
+    target_names = ['clickbait', 'no-clickbait']
+    print(classification_report(predicted_labels, test_labels, target_names=target_names))
+
+    return predicted_labels
+    print('false positive target titles:')
+
+
+def load_data(data_dir):
+    data = []
+    for line in open(data_dir + 'instances.jsonl'):
+        data.append(json.loads(line))
+    return data
+
+
+def load_labels(data_dir):
+    labels = []
+    for line in open(data_dir + 'truth.jsonl'):
+        labels.append(json.loads(line))
+    labels = [(x['id'], x['truthClass'] == 'clickbait') for x in labels]
+    return labels
+
+
+def load_and_prepare_data(data_dir):
+    data = load_data(data_dir)
+    labels = load_labels(data_dir)
+    if not check_data_label_alignment(data, labels):
+        raise Exception
+    labels = [x[1] for x in labels]
+
+    data, labels = balance_data(data, labels)
+
+    data, labels = shuffle(data, labels)
+
+    return data, labels
+
+
 # https://stackoverflow.com/questions/27050108/convert-numpy-type-to-python/27050186#27050186
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -119,60 +180,67 @@ class NumpyEncoder(json.JSONEncoder):
             return super(NumpyEncoder, self).default(obj)
 
 
-def main():
-    data = []
-    data_dir = '/home/neffle/data/clickbait/clickbait17-train-170331/'
-    # data_dir = '/home/xuri3814/data/clickbait17-train-170331/'
-    for line in open(data_dir + 'instances.jsonl'):
-        data.append(json.loads(line))
+def info(method):
+    def timed(*args, **kw):
+        ts = time.time()
+        result = method(*args, **kw)
+        te = time.time()
+        print('Function', method.__name__, 'time:', round((te -ts)*1000,1), 'ms')
+        print()
+        return result
+    return timed
 
-    labels = []
-    for line in open(data_dir + 'truth.jsonl'):
-        labels.append(json.loads(line))
 
-    if not check_data_label_alignment(data, labels):
-        raise Exception
-
-    labels = [x['truthClass'] == 'clickbait' for x in labels]
-
-    data, labels = balance_data(data, labels)
-
-    data, labels = shuffle(data, labels)
+@info
+def train_and_eval(data_dir, holdout=0.2):
+    data, labels = load_and_prepare_data(data_dir)
 
     vectorized_data, vocabs = vectorize_data(data)
     json.dump(vocabs, open(data_dir+'vocabs.json', 'w'), cls=NumpyEncoder)
-    train_test_split = 2394
+
+    train_test_split = int(len(labels)*holdout)
     vectorized_data = vectorized_data.tocsr()
     train_data = vectorized_data[:train_test_split, :]
     test_data = vectorized_data[train_test_split:, :]
     train_labels = labels[:train_test_split]
     test_labels = labels[train_test_split:]
 
-    clf = RandomForestClassifier(n_estimators=10)
-    clf = clf.fit(train_data, train_labels)
+    clf = train_and_save_clf(train_data, train_labels, data_dir+'RandomForestClassifier.pickle')
+    predicted_labels = evaluate_clf(clf, test_data, test_labels)
 
-    # pickle.dump(clf, open(data_dir+'RandomForestClassifier.pickle', 'w'))
-
-    scores = cross_val_score(clf, train_data, train_labels)
-    print('cross val:')
-    print(scores)
-
-    predicted_labels = clf.predict(test_data)
-    print('roc auc:')
-    print(roc_auc_score(predicted_labels, test_labels))
-
-    print('confusion:')
-    print(confusion_matrix(predicted_labels, test_labels))
-
-    print('report:')
-    target_names = ['clickbait', 'no-clickbait']
-    print(classification_report(predicted_labels, test_labels, target_names=target_names))
-
-    print('false positive target titles:')
     for i, predicted_clickbait in enumerate(predicted_labels):
         if predicted_clickbait and not test_labels[i]:
             print(data[train_test_split+i]['targetTitle'])
 
+@info
+def load_and_eval(data_dir):
+    data, labels = load_and_prepare_data(data_dir)
+
+    vocabs = json.load(open(data_dir+'vocabs.json', 'r'))
+
+    vectorized_data, _ = vectorize_data(data, vocabs)
+
+    clf = load_clf(data_dir+'RandomForestClassifier.pickle')
+
+    predicted_labels = evaluate_clf(clf, vectorized_data, labels)
+
+    # for i, predicted_clickbait in enumerate(predicted_labels):
+    #     if predicted_clickbait and not labels[i]:
+    #         print(data[i]['targetTitle'])
+
+@info
+def train(data_dir):
+    data, labels = load_and_prepare_data(data_dir)
+    vectorized_data, vocabs = vectorize_data(data)
+    json.dump(vocabs, open(data_dir+'vocabs.json', 'w'), cls=NumpyEncoder)
+    vectorized_data = vectorized_data.tocsr()
+    _ = train_and_save_clf(vectorized_data, labels, data_dir+'RandomForestClassifier.pickle')
+
+
 
 if __name__ == '__main__':
-    main()
+    data_dir = '/home/neffle/data/clickbait/clickbait17-train-170331/'
+    # data_dir = '/home/xuri3814/data/clickbait17-train-170331/'
+    # train_and_eval(data_dir)
+    # train(data_dir)
+    load_and_eval(data_dir)
