@@ -169,7 +169,7 @@ def info(method):
 @info
 def get_data(data_dir, load_data=True, load_vocab=True):
     if load_data:
-        vectorized_data = sio.mmread(data_dir + 'vectorized_data.mm').to_lil()
+        vectorized_data = sio.mmread(data_dir + 'vectorized_data.mm').tocsr()
         truth = np.load(data_dir + 'truth.npy')
     else:
         data, truth = load_and_prepare_data(data_dir)
@@ -201,10 +201,10 @@ if __name__ == '__main__':
     if len(sys.argv) < 2:
         folder = '/home/xuri3814/data/clickbait17-validation-170616/'
     else:
-        f = sys.argv[1]
+        folder = sys.argv[1]
 
     # data_dir = '/home/neffle/data/clickbait/clickbait17-train-170331/'
-    d, t = get_data(folder, load_data=False, load_vocab=False)
-    # d, t = get_data(folder)
+    # d, t = get_data(folder, load_data=False, load_vocab=False)
+    d, t = get_data(folder)
     reg = train_and_eval(d, t)
     save_regressor(reg, folder + 'RandomForestRegressor')
