@@ -91,10 +91,10 @@ def check_data_label_alignment(data, labels):
 
 
 def train(train_data, truth, cross_val=True):
-    regressor = RandomForestRegressor(n_estimators=5, n_jobs=-1)
+    regressor = RandomForestRegressor(n_estimators=30, n_jobs=-1)
     regressor = regressor.fit(train_data, truth)
     if cross_val:
-        scores = cross_val_score(regressor, train_data, truth, cv=3, n_jobs=-1, scoring='mean_squared_error')
+        scores = cross_val_score(regressor, train_data, truth, cv=10, n_jobs=-1, scoring='neg_mean_squared_error')
         print('cross val:')
         print(scores)
     return regressor
@@ -207,4 +207,4 @@ if __name__ == '__main__':
     # d, t = get_data(folder, load_data=False, load_vocab=False)
     d, t = get_data(folder)
     reg = train_and_eval(d, t)
-    save_regressor(reg, folder + 'RandomForestRegressor')
+    save_regressor(reg, folder + 'RandomForestRegressor_30')
