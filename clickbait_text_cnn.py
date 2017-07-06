@@ -39,7 +39,7 @@ def lazy_property(function):
 
 
 class Model:
-    def __init__(self, name, sequence_length, output_size, vocab_size=int(3e6), train_batch_size=5, test_batch_size=5,
+    def __init__(self, name, sequence_length, output_size, vocab_size=int(3e5), train_batch_size=5, test_batch_size=5,
                  embedding_size=200, num_filters=10, max_filter_length=5, beta=0.0001, dropout_keep_prob=0.5):
 
         self.name = name
