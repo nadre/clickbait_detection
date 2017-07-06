@@ -7,6 +7,8 @@ import datetime
 import os
 import name_gen as ng
 import gensim
+import random
+np.random.seed(2017)
 
 DTYPE = 'float32'
 RUN_NAME = ng.get_name()
@@ -244,17 +246,17 @@ def load_data():
     return tokens, truth
 
 
-def sample_test_set(x, y, size):
-    assert x.shape[0] == y.shape[0]
-    indices = np.random.choice(y.shape[0], size, replace=False)
-
-    x_ = x[indices, :]
-    x = np.delete(x, indices, axis=0)
-
-    y_ = y[indices, :]
-    y = np.delete(y, indices, axis=0).item()
-
-    return x, x_, y, y_
+def sample_test_set(data, labels, size):
+    """
+    https://stackoverflow.com/questions/17260109/sample-two-pandas-dataframes-the-same-way
+    """
+    assert data.shape[0] == labels.shape[0]
+    indices = np.random.randint(size, size=len(data)).astype('bool')
+    train_data = data[~indices]
+    test_data = data[indices]
+    train_labels = labels[~indices]
+    test_labels = labels[indices]
+    return train_data, test_data, train_labels, test_labels
 
 
 def evaluate_test_set(model, sess, test_data, test_labels, train_step, summary_writer):
