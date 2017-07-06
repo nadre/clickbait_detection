@@ -156,8 +156,10 @@ class Model:
 
     @lazy_property
     def embeddings(self):
-        return tf.Variable(tf.random_uniform([self.vocab_size, self.embedding_size], -1.0, 1.0, dtype=DTYPE),
+        with tf.device('/cpu:0'):
+            weights = tf.Variable(tf.random_uniform([self.vocab_size, self.embedding_size], -1.0, 1.0, dtype=DTYPE),
                            dtype=DTYPE)
+        return weights
 
     @lazy_property
     def optimize(self):
