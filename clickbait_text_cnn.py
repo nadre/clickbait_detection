@@ -3,10 +3,8 @@ import numpy as np
 import pandas as pd
 import math
 import functools
-import time
 import datetime
 import os
-import json
 import name_gen as ng
 import gensim
 
@@ -57,7 +55,7 @@ class Model:
         self.dropout_keep_prob = dropout_keep_prob
         self.beta = beta
 
-        self.best_distance = 1.0
+        self.lowest_cross_entropy = 999.0
         self.best_step = 0
 
         self._sequence_placeholder = tf.placeholder(tf.int32, shape=(None, self.sequence_length))
@@ -164,14 +162,17 @@ class Model:
     @lazy_property
     def optimize(self):
         with tf.name_scope('train'):
-            loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.prediction, labels=self._target_placeholder) \
-                   + self.beta * self.l2_loss
+            loss = self.cross_entropy + self.beta * self.l2_loss
             optimizer = tf.train.AdamOptimizer()
             return optimizer.minimize(loss, global_step=self.global_step)
 
     @lazy_property
     def global_step(self):
         return tf.Variable(0, name="global_step", trainable=False)
+
+    @lazy_property
+    def cross_entropy(self):
+        return tf.nn.softmax_cross_entropy_with_logits(logits=self.prediction, labels=self._target_placeholder)
 
     @lazy_property
     def l2_loss(self):
@@ -243,10 +244,77 @@ def load_data():
     return tokens, truth
 
 
-if __name__ == '__main__':
+def sample_test_set(x, y, size):
+    assert x.shape[0] == y.shape[0]
+    indices = np.random.choice(y.shape[0], size, replace=False)
+
+    x_ = x[indices, :]
+    x = np.delete(x, indices, axis=0)
+
+    y_ = y[indices, :]
+    y = np.delete(y, indices, axis=0).item()
+
+    return x, x_, y, y_
+
+
+def evaluate_test_set(model, sess, test_data, test_labels, train_step, summary_writer):
+    test_set_size = test_data.shape[0]
+    num_test_steps = int(test_set_size/model.test_batch_size) + 1
+    errors = {
+        'cross_entropy': [],
+        'l2_loss': []
+    }
+    for test_step in range(num_test_steps):
+        test_data_batch, test_label_batch = get_batch(test_data, test_labels, model.test_batch_size,
+                                                      test_step, test_set_size)
+        ce, l2_loss, summary = sess.run([
+            model.cross_entropy,
+            model.l2_loss_mean,
+            model.merged_summaries
+        ], feed_dict={model._sequence_placeholder: test_data_batch,
+                      model._target_placeholder: test_label_batch,
+                      model._dropout_keep_prob_placeholder: 1.0})
+
+        errors['cross_entropy'].append(ce)
+        errors['l2_loss'].append(l2_loss)
+
+        print('\n\n'
+              'Train Step: {}\n'
+              'Test Step: {}\n'
+              'Cross Entropy {:6.10f}\n'
+              'L2 Loss {:6.10f}\n'
+              .format(train_step, test_step, ce, l2_loss))
+
+        summary_writer.add_summary(summary, train_step + test_step)
+
+    error_description_df = pd.DataFrame.from_dict(errors).describe()
+    summary = tf.Summary()
+    print(RUN_NAME+'#'*(80 - len(RUN_NAME)))
+    for key in error_description_df.keys():
+        for measurement in ['mean', 'std']:
+            print('{} {} : {:6.10f}'.format(key, measurement, error_description_df[key][measurement]))
+            tag = 'test_{}_{}'.format(key, measurement)
+            summary.value.add(tag=tag, simple_value=error_description_df[key][measurement])
+    print('#'*80)
+    summary_writer.add_summary(summary, train_step)
+
+    ce = error_description_df['cross_entropy']['mean']
+
+    if ce < model.lowest_cross_entropy:
+        model.lowest_cross_entropy = ce
+        model.best_step = train_step
+        model.save_info(LOG_DIR, RUN_NAME + '.txt')
+        model.checkpoint.save(sess, CHECKPOINT_DIR, global_step=train_step)
+
+
+def main():
     tokens, truth = load_data()
     num_instances, sequence_length = tokens.shape
     _, output_size = truth.shape
+
+    test_set_size = 1000
+    train_data, test_data, train_labels, test_labels = sample_test_set(tokens, truth, test_set_size)
+    num_instances -= test_set_size
 
     model = Model(RUN_NAME, sequence_length, output_size)
 
@@ -259,13 +327,18 @@ if __name__ == '__main__':
 
     print('started running: ' + RUN_NAME)
     for train_step in range(100000):
-        train_data_batch, train_label_batch = get_batch(tokens, truth, model.train_batch_size,
+        train_data_batch, train_label_batch = get_batch(train_data, train_labels, model.train_batch_size,
                                                         train_step, num_instances)
 
         sess.run([model.optimize], feed_dict={model._sequence_placeholder: train_data_batch,
                                               model._target_placeholder: train_label_batch,
                                               model._dropout_keep_prob_placeholder: model.dropout_keep_prob})
 
+        if train_step != 0 and train_step % 100 == 0:
+            evaluate_test_set(model, sess, test_data, test_labels, train_step, summary_writer)
 
+
+if __name__ == '__main__':
+    main()
     # vocab, W = get_vocab_and_pretrained_embedding('/home/xuri3814/data/GoogleNews-vectors-negative300.bin')
     # sess.run(model.embeddings.assign(W))
