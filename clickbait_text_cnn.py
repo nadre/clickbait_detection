@@ -87,14 +87,14 @@ class Model:
 
     @lazy_property
     def prediction(self):
-        with tf.device('/gpu:0'):
-            pooling = self.convolution_and_max_pooling
+        # with tf.device('/gpu:0'):
+        pooling = self.convolution_and_max_pooling
 
         with tf.name_scope('prediction'):
-            with tf.device('/gpu:1'):
-                b1 = tf.Variable(tf.constant(0.1, shape=[self.output_size], dtype=DTYPE), dtype=DTYPE)
-                activation = tf.matmul(pooling, self.weights) + b1
-                softmax_out = tf.nn.softmax(activation)
+            # with tf.device('/gpu:1'):
+            b1 = tf.Variable(tf.constant(0.1, shape=[self.output_size], dtype=DTYPE), dtype=DTYPE)
+            activation = tf.matmul(pooling, self.weights) + b1
+            softmax_out = tf.nn.softmax(activation)
             summarize_variable('activation', activation)
             summarize_variable('softmax_out', softmax_out)
 
@@ -156,9 +156,9 @@ class Model:
 
     @lazy_property
     def embeddings(self):
-        with tf.device('/cpu:0'):
-            weights = tf.Variable(tf.random_uniform([self.vocab_size, self.embedding_size], -1.0, 1.0, dtype=DTYPE),
-                           dtype=DTYPE)
+        # with tf.device('/cpu:0'):
+        weights = tf.Variable(tf.random_uniform([self.vocab_size, self.embedding_size], -1.0, 1.0, dtype=DTYPE),
+                       dtype=DTYPE)
         return weights
 
     @lazy_property
