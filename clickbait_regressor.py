@@ -90,14 +90,17 @@ def check_data_label_alignment(data, labels):
     return True
 
 
-def train(train_data, truth, cross_val=True):
+def train(train_data, truth):
     regressor = RandomForestRegressor(n_estimators=30, n_jobs=-1)
     regressor = regressor.fit(train_data, truth)
-    if cross_val:
-        scores = cross_val_score(regressor, train_data, truth, cv=10, n_jobs=-1, scoring='neg_mean_squared_error')
-        print('cross val:')
-        print(scores)
     return regressor
+
+
+def cross_val(regressor, train_data, truth):
+    scores = cross_val_score(regressor, train_data, truth, cv=5, n_jobs=20, scoring='neg_mean_squared_error')
+    print('cross val:')
+    print(scores)
+    return scores
 
 
 def save_regressor(regressor, file_path):
@@ -206,5 +209,7 @@ if __name__ == '__main__':
     # data_dir = '/home/neffle/data/clickbait/clickbait17-train-170331/'
     # d, t = get_data(folder, load_data=False, load_vocab=False)
     d, t = get_data(folder)
-    reg = train_and_eval(d, t)
+    reg = train(d, t)
     save_regressor(reg, folder + 'RandomForestRegressor_30')
+    scores = cross_val(reg, d, t)
+    json.dump(scores, open(folder + 'cross_val_scores.json', 'w'))

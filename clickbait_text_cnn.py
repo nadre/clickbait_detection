@@ -8,12 +8,13 @@ import datetime
 import os
 import json
 import name_gen as ng
+import gensim
 
 DTYPE = 'float32'
 RUN_NAME = ng.get_name()
-LOG_DIR = '/home/xuri3814/data/references_cnn/logs/{}/'.format(RUN_NAME)
-CHECKPOINT_DIR = '/mnt/raid/data/xuri3814/checkpoints/{}/'.format(RUN_NAME)
-DATA_DIR = '/home/xuri3814/data/vectorized/'
+LOG_DIR = '/home/xuri3814/data/clickbait/cnn/runs/logs/{}/'.format(RUN_NAME)
+CHECKPOINT_DIR = '/home/xuri3814/data/clickbait/cnn/runs/checkpoints/{}/'.format(RUN_NAME)
+DATA_DIR = '/home/xuri3814/data/clickbait/'
 
 
 def lazy_property(function):
@@ -38,19 +39,16 @@ def lazy_property(function):
 
 
 class Model:
-    def __init__(self, name, input_size, output_size, vocab, train_batch_size=50, test_batch_size=50,
-                 embedding_size=150, num_filters=50, max_filter_length=4, beta=0.0001, dropout_keep_prob=0.5,
-                 sequence_length=20):
+    def __init__(self, name, sequence_length, output_size, vocab_size=int(3e6), train_batch_size=50, test_batch_size=50,
+                 embedding_size=300, num_filters=50, max_filter_length=10, beta=0.0001, dropout_keep_prob=0.5):
 
         self.name = name
         self.date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
 
         self.train_batch_size = train_batch_size
         self.test_batch_size = test_batch_size
-        self.input_size = input_size
         self.output_size = output_size
-        self.vocab = vocab
-        self.vocab_size = len(vocab)
+        self.vocab_size = vocab_size
         self.embedding_size = embedding_size
         self.filter_sizes = [fs for fs in range(1, max_filter_length)]
         self.num_filters = num_filters
@@ -63,7 +61,6 @@ class Model:
         self.best_step = 0
 
         self._sequence_placeholder = tf.placeholder(tf.int32, shape=(None, self.sequence_length))
-        self._input_placeholder = tf.placeholder(tf.float32, shape=(None, self.input_size))
         self._target_placeholder = tf.placeholder(tf.float32, shape=(None, self.output_size))
         self._dropout_keep_prob_placeholder = tf.placeholder(tf.float32, name="dropout_keep_prob")
 
@@ -97,20 +94,21 @@ class Model:
             with tf.device('/gpu:1'):
                 b1 = tf.Variable(tf.constant(0.1, shape=[self.output_size], dtype=DTYPE), dtype=DTYPE)
                 activation = tf.matmul(pooling, self.weights) + b1
-                activation_after_sigmoid = tf.sigmoid(activation)
+                softmax_out = tf.nn.softmax(activation)
             summarize_variable('activation', activation)
-            summarize_variable('activation_after_sigmoid', activation_after_sigmoid)
+            summarize_variable('softmax_out', softmax_out)
 
         summarize_variable('bias', b1)
         summarize_variable('weights', self.weights)
         summarize_variable('l2_loss', self.l2_loss)
-        return activation_after_sigmoid
+        return softmax_out
 
     @lazy_property
     def convolution_and_max_pooling(self):
         pooled_outputs = []
         for i, filter_size in enumerate(self.filter_sizes):
             with tf.name_scope('convolution-maxpool-%s' % filter_size):
+
                 # Convolution Layer
                 filter_shape = [filter_size, self.embedding_size, 1, self.num_filters]
                 W = tf.Variable(tf.truncated_normal(filter_shape, stddev=0.1), name='W')
@@ -164,7 +162,7 @@ class Model:
     @lazy_property
     def optimize(self):
         with tf.name_scope('train'):
-            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(self.prediction, self._target_placeholder) \
+            loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.prediction, labels=self._target_placeholder) \
                    + self.beta * self.l2_loss
             optimizer = tf.train.AdamOptimizer()
             return optimizer.minimize(loss, global_step=self.global_step)
@@ -230,13 +228,42 @@ def split_test_set_by_indices(x, y, indices):
     return x, x_, y, y_
 
 
+def get_vocab_and_pretrained_embedding(path_to_model):
+    model = gensim.models.KeyedVectors.load_word2vec_format(path_to_model, binary=True)
+    W = model.syn0
+    vocab = model.vocab
+    return vocab, W
+
+
 def load_data():
-    # TODO
-    return
+    truth = pd.read_pickle(DATA_DIR+'all_truth_vectorized.pickle')
+    tokens = pd.read_pickle(DATA_DIR+'all_tokens_vectorized.pickle')
+    return tokens, truth
 
-
-def load_vocab():
-    # TODO
-    return
 
 if __name__ == '__main__':
+    tokens, truth = load_data()
+    num_instances, sequence_length = tokens.shape
+    _, output_size = truth.shape
+
+    model = Model(RUN_NAME, sequence_length, output_size)
+
+    print(model.get_info())
+    model.save_info(LOG_DIR, RUN_NAME + '.txt')
+
+    sess = tf.Session()
+    summary_writer = tf.summary.FileWriter(LOG_DIR, sess.graph)
+    sess.run(tf.global_variables_initializer())
+
+    print('started running: ' + RUN_NAME)
+    for train_step in range(100000):
+        train_data_batch, train_label_batch = get_batch(tokens, truth, model.train_batch_size,
+                                                        train_step, num_instances)
+
+        sess.run([model.optimize], feed_dict={model._data_placeholder: train_data_batch,
+                                              model._target_placeholder: train_label_batch,
+                                              model._dropout_keep_prob_placeholder: model.dropout_keep_prob})
+
+
+    # vocab, W = get_vocab_and_pretrained_embedding('/home/xuri3814/data/GoogleNews-vectors-negative300.bin')
+    # sess.run(model.embeddings.assign(W))
