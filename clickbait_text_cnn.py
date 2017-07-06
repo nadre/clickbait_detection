@@ -1,0 +1,242 @@
+import tensorflow as tf
+import numpy as np
+import pandas as pd
+import math
+import functools
+import time
+import datetime
+import os
+import json
+import name_gen as ng
+
+DTYPE = 'float32'
+RUN_NAME = ng.get_name()
+LOG_DIR = '/home/xuri3814/data/references_cnn/logs/{}/'.format(RUN_NAME)
+CHECKPOINT_DIR = '/mnt/raid/data/xuri3814/checkpoints/{}/'.format(RUN_NAME)
+DATA_DIR = '/home/xuri3814/data/vectorized/'
+
+
+def lazy_property(function):
+    """
+    http://danijar.com/structuring-your-tensorflow-models/
+    http://www.wildml.com/2015/12/implementing-a-cnn-for-text-classification-in-tensorflow/
+    paper: http://arxiv.org/abs/1408.5882
+    :param function:
+    :return:
+    """
+    attribute = '_cache_' + function.__name__
+
+    @property
+    @functools.wraps(function)
+    def decorator(self):
+        if not hasattr(self, attribute):
+            # print(function.__name__)
+            setattr(self, attribute, function(self))
+        return getattr(self, attribute)
+
+    return decorator
+
+
+class Model:
+    def __init__(self, name, input_size, output_size, vocab, train_batch_size=50, test_batch_size=50,
+                 embedding_size=150, num_filters=50, max_filter_length=4, beta=0.0001, dropout_keep_prob=0.5,
+                 sequence_length=20):
+
+        self.name = name
+        self.date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+
+        self.train_batch_size = train_batch_size
+        self.test_batch_size = test_batch_size
+        self.input_size = input_size
+        self.output_size = output_size
+        self.vocab = vocab
+        self.vocab_size = len(vocab)
+        self.embedding_size = embedding_size
+        self.filter_sizes = [fs for fs in range(1, max_filter_length)]
+        self.num_filters = num_filters
+        self.pooling_layer_output_size = self.num_filters * len(self.filter_sizes)
+        self.sequence_length = sequence_length
+        self.dropout_keep_prob = dropout_keep_prob
+        self.beta = beta
+
+        self.best_distance = 1.0
+        self.best_step = 0
+
+        self._sequence_placeholder = tf.placeholder(tf.int32, shape=(None, self.sequence_length))
+        self._input_placeholder = tf.placeholder(tf.float32, shape=(None, self.input_size))
+        self._target_placeholder = tf.placeholder(tf.float32, shape=(None, self.output_size))
+        self._dropout_keep_prob_placeholder = tf.placeholder(tf.float32, name="dropout_keep_prob")
+
+        self.embedding_lookup
+        self.convolution_and_max_pooling
+        self.prediction
+        self.optimize
+        self.merged_summaries
+        self.weights
+        self.global_step
+        self.l2_loss
+
+    def get_info(self):
+        info = ''
+        for attr, value in self.__dict__.items():
+            if not attr.startswith('_') and not callable(value):
+                info += '{}: {}\n'.format(attr, value)
+        return info
+
+    def save_info(self, info_dir, fname):
+        os.makedirs(info_dir, exist_ok=True)
+        with open(info_dir + fname, 'w') as text_file:
+            print(self.get_info(), file=text_file)
+
+    @lazy_property
+    def prediction(self):
+        with tf.device('/gpu:0'):
+            pooling = self.convolution_and_max_pooling
+
+        with tf.name_scope('prediction'):
+            with tf.device('/gpu:1'):
+                b1 = tf.Variable(tf.constant(0.1, shape=[self.output_size], dtype=DTYPE), dtype=DTYPE)
+                activation = tf.matmul(pooling, self.weights) + b1
+                activation_after_sigmoid = tf.sigmoid(activation)
+            summarize_variable('activation', activation)
+            summarize_variable('activation_after_sigmoid', activation_after_sigmoid)
+
+        summarize_variable('bias', b1)
+        summarize_variable('weights', self.weights)
+        summarize_variable('l2_loss', self.l2_loss)
+        return activation_after_sigmoid
+
+    @lazy_property
+    def convolution_and_max_pooling(self):
+        pooled_outputs = []
+        for i, filter_size in enumerate(self.filter_sizes):
+            with tf.name_scope('convolution-maxpool-%s' % filter_size):
+                # Convolution Layer
+                filter_shape = [filter_size, self.embedding_size, 1, self.num_filters]
+                W = tf.Variable(tf.truncated_normal(filter_shape, stddev=0.1), name='W')
+                b = tf.Variable(tf.constant(0.1, shape=[self.num_filters]), name='b')
+                conv = tf.nn.conv2d(
+                    self.embedding_lookup,
+                    W,
+                    strides=[1, 1, 1, 1],
+                    padding='VALID',
+                    name='convolution')
+
+                # Apply nonlinearity
+                h = tf.nn.relu(tf.nn.bias_add(conv, b), name='relu')
+
+                # Max-pooling over the outputs
+                pooled = tf.nn.max_pool(
+                    h,
+                    ksize=[1, self.sequence_length - filter_size + 1, 1, 1],
+                    strides=[1, 1, 1, 1],
+                    padding='VALID',
+                    name='pooling')
+                pooled_outputs.append(pooled)
+
+        # Combine all the pooled features
+        with tf.name_scope('combine_and_reshape'):
+            h_pool = tf.concat(pooled_outputs, 3)
+            h_pool_flat = tf.reshape(h_pool, [-1, self.pooling_layer_output_size])
+
+        with tf.name_scope('dropout'):
+            h_pool_flat = tf.nn.dropout(h_pool_flat, self._dropout_keep_prob_placeholder)
+
+        return h_pool_flat
+
+    @lazy_property
+    def weights(self):
+        weights = tf.Variable(tf.truncated_normal([self.pooling_layer_output_size, self.output_size],
+                                                  stddev=1/math.sqrt(self.output_size), dtype=DTYPE), dtype=DTYPE)
+        return weights
+
+    @lazy_property
+    def embedding_lookup(self):
+        embedding_lookup = tf.nn.embedding_lookup(self.embeddings, self._sequence_placeholder)
+        embedding_lookup_expanded = tf.expand_dims(embedding_lookup, -1)
+        return embedding_lookup_expanded
+
+    @lazy_property
+    def embeddings(self):
+        return tf.Variable(tf.random_uniform([self.vocab_size, self.embedding_size], -1.0, 1.0, dtype=DTYPE),
+                           dtype=DTYPE)
+
+    @lazy_property
+    def optimize(self):
+        with tf.name_scope('train'):
+            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(self.prediction, self._target_placeholder) \
+                   + self.beta * self.l2_loss
+            optimizer = tf.train.AdamOptimizer()
+            return optimizer.minimize(loss, global_step=self.global_step)
+
+    @lazy_property
+    def global_step(self):
+        return tf.Variable(0, name="global_step", trainable=False)
+
+    @lazy_property
+    def l2_loss(self):
+        return tf.nn.l2_loss(self.weights, name='l2_regularization')
+
+    @lazy_property
+    def l2_loss_mean(self):
+        return tf.reduce_mean(self.l2_loss)
+
+    @lazy_property
+    def merged_summaries(self):
+        return tf.summary.merge_all()
+
+    @lazy_property
+    def checkpoint(self):
+        if not os.path.exists(CHECKPOINT_DIR):
+            os.makedirs(CHECKPOINT_DIR)
+        return tf.train.Saver(tf.global_variables())
+
+
+def summarize_variable(name_scope, var):
+    """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
+    with tf.name_scope(name_scope + '_summaries'):
+        mean = tf.reduce_mean(var)
+        tf.summary.scalar('mean', mean)
+        with tf.name_scope('stddev'):
+            stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
+        tf.summary.scalar('stddev', stddev)
+        tf.summary.scalar('max', tf.reduce_max(var))
+        tf.summary.scalar('min', tf.reduce_min(var))
+        tf.summary.histogram('histogram', var)
+
+
+def get_batch(x, y, batch_size, step, num_samples):
+    assert batch_size < num_samples
+
+    start = step * batch_size
+    if start > (num_samples - 1):
+        start %= num_samples
+    end = start + batch_size
+    if end > (num_samples - 1):
+        end = num_samples - 1
+
+    return x[start:end], y[start:end]
+
+
+def split_test_set_by_indices(x, y, indices):
+    assert x.shape[0] == y.shape[0]
+
+    x_ = x[indices, :]
+    x = np.delete(x, indices, axis=0)
+
+    y_ = y[indices, :]
+    y = np.delete(y, indices, axis=0)
+
+    return x, x_, y, y_
+
+
+def load_data():
+    # TODO
+    return
+
+
+def load_vocab():
+    # TODO
+    return
+
+if __name__ == '__main__':
