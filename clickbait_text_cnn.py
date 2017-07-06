@@ -262,7 +262,7 @@ if __name__ == '__main__':
         train_data_batch, train_label_batch = get_batch(tokens, truth, model.train_batch_size,
                                                         train_step, num_instances)
 
-        sess.run([model.optimize], feed_dict={model._data_placeholder: train_data_batch,
+        sess.run([model.optimize], feed_dict={model._sequence_placeholder: train_data_batch,
                                               model._target_placeholder: train_label_batch,
                                               model._dropout_keep_prob_placeholder: model.dropout_keep_prob})
 
