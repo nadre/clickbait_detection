@@ -150,16 +150,16 @@ class Model:
 
     @lazy_property
     def embedding_lookup(self):
-        embedding_lookup = tf.nn.embedding_lookup(self.embeddings, self._sequence_placeholder)
-        embedding_lookup_expanded = tf.expand_dims(embedding_lookup, -1)
+        with tf.device('/cpu:0'):
+            embedding_lookup = tf.nn.embedding_lookup(self.embeddings, self._sequence_placeholder)
+            embedding_lookup_expanded = tf.expand_dims(embedding_lookup, -1)
         return embedding_lookup_expanded
 
     @lazy_property
     def embeddings(self):
-        with tf.device('/cpu:0'):
-            weights = tf.Variable(tf.random_uniform([self.vocab_size, self.embedding_size], -1.0, 1.0, dtype=DTYPE),
-                       dtype=DTYPE)
-        return weights
+        embedding_matrix = tf.Variable(tf.random_uniform([self.vocab_size, self.embedding_size], -1.0, 1.0, dtype=DTYPE),
+               dtype=DTYPE)
+        return embedding_matrix
 
     @lazy_property
     def optimize(self):
