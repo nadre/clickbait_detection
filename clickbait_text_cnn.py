@@ -39,8 +39,8 @@ def lazy_property(function):
 
 
 class Model:
-    def __init__(self, name, sequence_length, output_size, vocab_size=int(3e6), train_batch_size=50, test_batch_size=50,
-                 embedding_size=300, num_filters=50, max_filter_length=10, beta=0.0001, dropout_keep_prob=0.5):
+    def __init__(self, name, sequence_length, output_size, vocab_size=int(3e6), train_batch_size=20, test_batch_size=20,
+                 embedding_size=200, num_filters=10, max_filter_length=5, beta=0.0001, dropout_keep_prob=0.5):
 
         self.name = name
         self.date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -145,7 +145,7 @@ class Model:
     @lazy_property
     def weights(self):
         weights = tf.Variable(tf.truncated_normal([self.pooling_layer_output_size, self.output_size],
-                                                  stddev=1/math.sqrt(self.output_size), dtype=DTYPE), dtype=DTYPE)
+                                                      stddev=1/math.sqrt(self.output_size), dtype=DTYPE), dtype=DTYPE)
         return weights
 
     @lazy_property
