@@ -39,7 +39,7 @@ def lazy_property(function):
 
 
 class Model:
-    def __init__(self, name, sequence_length, output_size, vocab_size=int(3e6), train_batch_size=20, test_batch_size=20,
+    def __init__(self, name, sequence_length, output_size, vocab_size=int(3e6), train_batch_size=5, test_batch_size=5,
                  embedding_size=200, num_filters=10, max_filter_length=5, beta=0.0001, dropout_keep_prob=0.5):
 
         self.name = name
@@ -156,8 +156,8 @@ class Model:
 
     @lazy_property
     def embeddings(self):
-        # with tf.device('/cpu:0'):
-        weights = tf.Variable(tf.random_uniform([self.vocab_size, self.embedding_size], -1.0, 1.0, dtype=DTYPE),
+        with tf.device('/cpu:0'):
+            weights = tf.Variable(tf.random_uniform([self.vocab_size, self.embedding_size], -1.0, 1.0, dtype=DTYPE),
                        dtype=DTYPE)
         return weights
 
