@@ -1,14 +1,12 @@
 import tensorflow as tf
 import numpy as np
 import pandas as pd
-import math
 import functools
 import datetime
 import os
 import name_gen as ng
 import gensim
-import random
-np.random.seed(2017)
+np.random.seed(1991)
 
 DTYPE = 'float32'
 RUN_NAME = ng.get_name()
@@ -39,11 +37,13 @@ def lazy_property(function):
 
 
 class Model:
-    def __init__(self, name, sequence_length, output_size, vocab_size=int(3e5), train_batch_size=5, test_batch_size=5,
-                 embedding_size=200, num_filters=10, max_filter_length=5, beta=0.0001, dropout_keep_prob=0.5):
+    def __init__(self, name, sequence_length, output_size, vocab_size=int(3e6), train_batch_size=80, test_batch_size=80,
+                 embedding_size=300, num_filters=32, max_filter_length=15, beta=0.00001, dropout_keep_prob=0.5,
+                 embedding_name='unknown'):
 
         self.name = name
         self.date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+        self.embedding_name = embedding_name
 
         self.train_batch_size = train_batch_size
         self.test_batch_size = test_batch_size
@@ -57,19 +57,21 @@ class Model:
         self.dropout_keep_prob = dropout_keep_prob
         self.beta = beta
 
-        self.lowest_cross_entropy = 999.0
+        self.lowest_mse = 999.0
         self.best_step = 0
 
         self._sequence_placeholder = tf.placeholder(tf.int32, shape=(None, self.sequence_length))
         self._target_placeholder = tf.placeholder(tf.float32, shape=(None, self.output_size))
         self._dropout_keep_prob_placeholder = tf.placeholder(tf.float32, name="dropout_keep_prob")
 
+        self.embedding_placeholder
+        self.embedding
         self.embedding_lookup
         self.convolution_and_max_pooling
         self.prediction
         self.optimize
         self.merged_summaries
-        self.weights
+        self.output_weights_and_bias
         self.global_step
         self.l2_loss
 
@@ -87,19 +89,17 @@ class Model:
 
     @lazy_property
     def prediction(self):
-        # with tf.device('/gpu:0'):
         pooling = self.convolution_and_max_pooling
 
         with tf.name_scope('prediction'):
-            # with tf.device('/gpu:1'):
-            b1 = tf.Variable(tf.constant(0.1, shape=[self.output_size], dtype=DTYPE), dtype=DTYPE)
-            activation = tf.matmul(pooling, self.weights) + b1
+            weights, bias = self.output_weights_and_bias
+            activation = tf.matmul(pooling, weights) + bias
             softmax_out = tf.nn.softmax(activation)
             summarize_variable('activation', activation)
             summarize_variable('softmax_out', softmax_out)
 
-        summarize_variable('bias', b1)
-        summarize_variable('weights', self.weights)
+        summarize_variable('bias', bias)
+        summarize_variable('weights', weights)
         summarize_variable('l2_loss', self.l2_loss)
         return softmax_out
 
@@ -143,28 +143,38 @@ class Model:
         return h_pool_flat
 
     @lazy_property
-    def weights(self):
-        weights = tf.Variable(tf.truncated_normal([self.pooling_layer_output_size, self.output_size],
-                                                      stddev=1/math.sqrt(self.output_size), dtype=DTYPE), dtype=DTYPE)
-        return weights
+    def output_weights_and_bias(self):
+        weights = tf.get_variable(
+            "output_weights",
+            shape=[self.pooling_layer_output_size, self.output_size],
+            initializer=tf.contrib.layers.xavier_initializer())
+        bias = tf.Variable(tf.constant(0.1, shape=[self.output_size]), name="output_bias")
+        return weights, bias
 
     @lazy_property
     def embedding_lookup(self):
-        with tf.device('/cpu:0'):
-            embedding_lookup = tf.nn.embedding_lookup(self.embeddings, self._sequence_placeholder)
+        with tf.device('/:cpu0'):
+            embedding_lookup = tf.nn.embedding_lookup(self.embedding, self._sequence_placeholder)
             embedding_lookup_expanded = tf.expand_dims(embedding_lookup, -1)
-        return embedding_lookup_expanded
+            return embedding_lookup_expanded
 
     @lazy_property
-    def embeddings(self):
-        embedding_matrix = tf.Variable(tf.random_uniform([self.vocab_size, self.embedding_size], -1.0, 1.0, dtype=DTYPE),
-               dtype=DTYPE)
-        return embedding_matrix
+    def embedding_placeholder(self):
+        """
+        https://stackoverflow.com/questions/35394103/initializing-tensorflow-variable-with-an-array-larger-than-2gb
+        :return:
+        """
+        return tf.placeholder(tf.float32, shape=(self.vocab_size, self.embedding_size))
+
+    @lazy_property
+    def embedding(self):
+        embedding = tf.Variable(self.embedding_placeholder)
+        return embedding
 
     @lazy_property
     def optimize(self):
         with tf.name_scope('train'):
-            loss = self.cross_entropy + self.beta * self.l2_loss
+            loss = self.mse + self.beta * self.l2_loss
             optimizer = tf.train.AdamOptimizer()
             return optimizer.minimize(loss, global_step=self.global_step)
 
@@ -173,12 +183,25 @@ class Model:
         return tf.Variable(0, name="global_step", trainable=False)
 
     @lazy_property
-    def cross_entropy(self):
-        return tf.nn.softmax_cross_entropy_with_logits(logits=self.prediction, labels=self._target_placeholder)
+    def mse(self):
+        return tf.losses.mean_squared_error(self._target_placeholder, self.prediction)
+
+    @lazy_property
+    def mse_mean(self):
+        return tf.reduce_mean(self.mse)
+
+    @lazy_property
+    def log_loss(self):
+        return tf.losses.log_loss(labels=self._target_placeholder, predictions=self.prediction)
+
+    @lazy_property
+    def log_loss_mean(self):
+        return tf.reduce_mean(self.log_loss)
 
     @lazy_property
     def l2_loss(self):
-        return tf.nn.l2_loss(self.weights, name='l2_regularization')
+        weights, bias = self.output_weights_and_bias
+        return tf.nn.l2_loss(weights) + tf.nn.l2_loss(bias)
 
     @lazy_property
     def l2_loss_mean(self):
@@ -221,37 +244,25 @@ def get_batch(x, y, batch_size, step, num_samples):
     return x[start:end], y[start:end]
 
 
-def split_test_set_by_indices(x, y, indices):
-    assert x.shape[0] == y.shape[0]
-
-    x_ = x[indices, :]
-    x = np.delete(x, indices, axis=0)
-
-    y_ = y[indices, :]
-    y = np.delete(y, indices, axis=0)
-
-    return x, x_, y, y_
-
-
-def get_vocab_and_pretrained_embedding(path_to_model):
-    model = gensim.models.KeyedVectors.load_word2vec_format(path_to_model, binary=True)
+def get_vocab_and_pretrained_embedding(path_to_model, binary=False):
+    model = gensim.models.KeyedVectors.load_word2vec_format(path_to_model, binary=binary)
     W = model.syn0
     vocab = model.vocab
     return vocab, W
 
 
 def load_data():
-    truth = pd.read_pickle(DATA_DIR+'all_truth_vectorized.pickle')
-    tokens = pd.read_pickle(DATA_DIR+'all_tokens_vectorized.pickle')
+    truth = pd.read_pickle(DATA_DIR+'glove.6B.200d_labels.pickle')
+    tokens = pd.read_pickle(DATA_DIR+'glove.6B.200d_indices.pickle')
     return tokens, truth
 
 
-def sample_test_set(data, labels, size):
+def sample_test_set(data, labels, fraction):
     """
     https://stackoverflow.com/questions/17260109/sample-two-pandas-dataframes-the-same-way
     """
     assert data.shape[0] == labels.shape[0]
-    indices = np.random.randint(size, size=len(data)).astype('bool')
+    indices = np.random.binomial(1, fraction, size=data.shape[0]).astype('bool')
     train_data = data[~indices]
     test_data = data[indices]
     train_labels = labels[~indices]
@@ -263,29 +274,33 @@ def evaluate_test_set(model, sess, test_data, test_labels, train_step, summary_w
     test_set_size = test_data.shape[0]
     num_test_steps = int(test_set_size/model.test_batch_size) + 1
     errors = {
-        'cross_entropy': [],
+        'mse': [],
+        'log_loss': [],
         'l2_loss': []
     }
     for test_step in range(num_test_steps):
         test_data_batch, test_label_batch = get_batch(test_data, test_labels, model.test_batch_size,
                                                       test_step, test_set_size)
-        ce, l2_loss, summary = sess.run([
-            model.cross_entropy,
+        mse, log_loss, l2_loss, summary = sess.run([
+            model.mse_mean,
+            model.log_loss_mean,
             model.l2_loss_mean,
             model.merged_summaries
         ], feed_dict={model._sequence_placeholder: test_data_batch,
                       model._target_placeholder: test_label_batch,
                       model._dropout_keep_prob_placeholder: 1.0})
 
-        errors['cross_entropy'].append(ce)
+        errors['mse'].append(mse)
+        errors['log_loss'].append(log_loss)
         errors['l2_loss'].append(l2_loss)
 
         print('\n\n'
               'Train Step: {}\n'
               'Test Step: {}\n'
-              'Cross Entropy {:6.10f}\n'
+              'MSE {:6.10f}\n'
+              'Log Loss {:6.10f}\n'
               'L2 Loss {:6.10f}\n'
-              .format(train_step, test_step, ce, l2_loss))
+              .format(train_step, test_step, mse, log_loss, l2_loss))
 
         summary_writer.add_summary(summary, train_step + test_step)
 
@@ -300,10 +315,10 @@ def evaluate_test_set(model, sess, test_data, test_labels, train_step, summary_w
     print('#'*80)
     summary_writer.add_summary(summary, train_step)
 
-    ce = error_description_df['cross_entropy']['mean']
+    mse = error_description_df['mse']['mean']
 
-    if ce < model.lowest_cross_entropy:
-        model.lowest_cross_entropy = ce
+    if mse < model.lowest_mse:
+        model.lowest_mse = mse
         model.best_step = train_step
         model.save_info(LOG_DIR, RUN_NAME + '.txt')
         model.checkpoint.save(sess, CHECKPOINT_DIR, global_step=train_step)
@@ -314,18 +329,28 @@ def main():
     num_instances, sequence_length = tokens.shape
     _, output_size = truth.shape
 
-    test_set_size = 1000
-    train_data, test_data, train_labels, test_labels = sample_test_set(tokens, truth, test_set_size)
+    train_data, test_data, train_labels, test_labels = sample_test_set(tokens, truth, 0.1)
+    test_set_size = test_data.shape[0]
     num_instances -= test_set_size
 
-    model = Model(RUN_NAME, sequence_length, output_size)
+    embedding_name = 'glove.6B.200d.w2v.bin'
+
+    print('loading embedding...')
+    vocab, embedding = get_vocab_and_pretrained_embedding(DATA_DIR + embedding_name, binary=True)
+    print('...done.')
+
+    vocab_size, embedding_size = embedding.shape
+
+    model = Model(RUN_NAME, sequence_length, output_size,
+                  vocab_size=vocab_size, embedding_size=embedding_size, embedding_name=embedding_name)
 
     print(model.get_info())
     model.save_info(LOG_DIR, RUN_NAME + '.txt')
 
-    sess = tf.Session()
+    sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
     summary_writer = tf.summary.FileWriter(LOG_DIR, sess.graph)
-    sess.run(tf.global_variables_initializer())
+
+    sess.run(tf.global_variables_initializer(), feed_dict={model.embedding_placeholder: embedding})
 
     print('started running: ' + RUN_NAME)
     for train_step in range(100000):
@@ -336,11 +361,9 @@ def main():
                                               model._target_placeholder: train_label_batch,
                                               model._dropout_keep_prob_placeholder: model.dropout_keep_prob})
 
-        if train_step != 0 and train_step % 100 == 0:
+        if train_step != 0 and train_step % 500 == 0:
             evaluate_test_set(model, sess, test_data, test_labels, train_step, summary_writer)
 
 
 if __name__ == '__main__':
     main()
-    # vocab, W = get_vocab_and_pretrained_embedding('/home/xuri3814/data/GoogleNews-vectors-negative300.bin')
-    # sess.run(model.embeddings.assign(W))
