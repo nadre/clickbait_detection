@@ -23,8 +23,10 @@ def strip_non_alphanum(token):
     return re.sub(r'\W+', '', token)
 
 
-def tokenize(tweet_text, remove_non_alphanum=False):
-    tokens = tokenizer.tokenize(tweet_text.lower())
+def tokenize(tweet_text, remove_non_alphanum=True, lowercase=False):
+    if lowercase:
+        tweet_text = tweet_text.lower()
+    tokens = tokenizer.tokenize(tweet_text)
     if remove_non_alphanum:
         tokens = [strip_non_alphanum(t) for t in tokens]
     return list(filter(None, tokens))
@@ -65,7 +67,7 @@ def tokens_to_indices(tokens_df, data_dir, file_prefix, vocab):
 
 
 def get_vocab_and_pretrained_embedding(path_to_model):
-    model = gensim.models.KeyedVectors.load_word2vec_format(path_to_model)
+    model = gensim.models.KeyedVectors.load_word2vec_format(path_to_model, binary=True)
     W = model.syn0
     print('model shape:')
     print(W.shape)
@@ -89,8 +91,8 @@ def main():
     data_dir = '/home/xuri3814/data/clickbait/'
     path_to_instances = data_dir + 'all_instances.jsonl'
     path_to_labels = data_dir + 'all_truth.jsonl'
-    file_prefix = 'glove.6B.200d'
-    path_to_model = data_dir + 'glove.6B.200d.w2v.txt'
+    file_prefix = 'googlenews300'
+    path_to_model = data_dir + 'googlenews300.bin'
     df_tokens = instances_to_token(path_to_instances, data_dir, file_prefix)
     vocab, _ = get_vocab_and_pretrained_embedding(path_to_model)
     tokens_to_indices(df_tokens, data_dir, file_prefix, vocab)

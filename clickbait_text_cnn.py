@@ -6,7 +6,7 @@ import datetime
 import os
 import name_gen as ng
 import gensim
-np.random.seed(1991)
+np.random.seed(686)
 
 DTYPE = 'float32'
 RUN_NAME = ng.get_name()
@@ -37,14 +37,15 @@ def lazy_property(function):
 
 
 class Model:
-    def __init__(self, name, sequence_length, output_size, vocab_size=int(3e6), train_batch_size=80, test_batch_size=80,
-                 embedding_size=300, num_filters=32, max_filter_length=15, beta=0.00001, dropout_keep_prob=0.5,
-                 embedding_name='unknown'):
+    def __init__(self, name, sequence_length, output_size, vocab_size=int(3e6), train_batch_size=100, test_batch_size=100,
+                 embedding_size=300, num_filters=64, max_filter_length=15, beta=0.001, dropout_keep_prob=0.5,
+                 embedding_name='unknown', learning_rate=0.05):
 
         self.name = name
         self.date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
         self.embedding_name = embedding_name
-
+        
+        self.learning_rate = learning_rate
         self.train_batch_size = train_batch_size
         self.test_batch_size = test_batch_size
         self.output_size = output_size
@@ -65,7 +66,6 @@ class Model:
         self._dropout_keep_prob_placeholder = tf.placeholder(tf.float32, name="dropout_keep_prob")
 
         self.embedding_placeholder
-        self.embedding
         self.embedding_lookup
         self.convolution_and_max_pooling
         self.prediction
@@ -154,7 +154,8 @@ class Model:
     @lazy_property
     def embedding_lookup(self):
         with tf.device('/:cpu0'):
-            embedding_lookup = tf.nn.embedding_lookup(self.embedding, self._sequence_placeholder)
+            embedding = tf.Variable(self.embedding_placeholder, trainable=False)
+            embedding_lookup = tf.nn.embedding_lookup(embedding, self._sequence_placeholder)
             embedding_lookup_expanded = tf.expand_dims(embedding_lookup, -1)
             return embedding_lookup_expanded
 
@@ -167,15 +168,10 @@ class Model:
         return tf.placeholder(tf.float32, shape=(self.vocab_size, self.embedding_size))
 
     @lazy_property
-    def embedding(self):
-        embedding = tf.Variable(self.embedding_placeholder)
-        return embedding
-
-    @lazy_property
     def optimize(self):
         with tf.name_scope('train'):
             loss = self.mse + self.beta * self.l2_loss
-            optimizer = tf.train.AdamOptimizer()
+            optimizer = tf.train.AdagradOptimizer(self.learning_rate)
             return optimizer.minimize(loss, global_step=self.global_step)
 
     @lazy_property
@@ -246,14 +242,14 @@ def get_batch(x, y, batch_size, step, num_samples):
 
 def get_vocab_and_pretrained_embedding(path_to_model, binary=False):
     model = gensim.models.KeyedVectors.load_word2vec_format(path_to_model, binary=binary)
-    W = model.syn0
+    embedding = model.syn0
     vocab = model.vocab
-    return vocab, W
+    return vocab, embedding
 
 
-def load_data():
-    truth = pd.read_pickle(DATA_DIR+'glove.6B.200d_labels.pickle')
-    tokens = pd.read_pickle(DATA_DIR+'glove.6B.200d_indices.pickle')
+def load_data(embedding_name):
+    truth = pd.read_pickle(DATA_DIR+embedding_name+'_labels.pickle')
+    tokens = pd.read_pickle(DATA_DIR+embedding_name+'_indices.pickle')
     return tokens, truth
 
 
@@ -324,8 +320,8 @@ def evaluate_test_set(model, sess, test_data, test_labels, train_step, summary_w
         model.checkpoint.save(sess, CHECKPOINT_DIR, global_step=train_step)
 
 
-def main():
-    tokens, truth = load_data()
+def main(embedding_name):
+    tokens, truth = load_data(embedding_name)
     num_instances, sequence_length = tokens.shape
     _, output_size = truth.shape
 
@@ -333,10 +329,8 @@ def main():
     test_set_size = test_data.shape[0]
     num_instances -= test_set_size
 
-    embedding_name = 'glove.6B.200d.w2v.bin'
-
     print('loading embedding...')
-    vocab, embedding = get_vocab_and_pretrained_embedding(DATA_DIR + embedding_name, binary=True)
+    vocab, embedding = get_vocab_and_pretrained_embedding(DATA_DIR + embedding_name + '.bin', binary=True)
     print('...done.')
 
     vocab_size, embedding_size = embedding.shape
@@ -366,4 +360,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    main(embedding_name='googlenews300')
