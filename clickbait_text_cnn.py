@@ -39,7 +39,7 @@ def lazy_property(function):
 class Model:
     def __init__(self, name, sequence_length, output_size, vocab_size=int(3e6), train_batch_size=100, test_batch_size=100,
                  embedding_size=300, num_filters=64, max_filter_length=15, beta=0.001, dropout_keep_prob=0.5,
-                 embedding_name='unknown', learning_rate=0.05):
+                 embedding_name='unknown', learning_rate=0.05, info=''):
 
         self.name = name
         self.date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -58,7 +58,9 @@ class Model:
         self.dropout_keep_prob = dropout_keep_prob
         self.beta = beta
 
-        self.lowest_mse = 999.0
+        self.info = ''
+
+        self.lowest_log_loss = 9e10
         self.best_step = 0
 
         self._sequence_placeholder = tf.placeholder(tf.int32, shape=(None, self.sequence_length))
@@ -170,7 +172,7 @@ class Model:
     @lazy_property
     def optimize(self):
         with tf.name_scope('train'):
-            loss = self.mse + self.beta * self.l2_loss
+            loss = self.log_loss + self.beta * self.l2_loss
             optimizer = tf.train.AdagradOptimizer(self.learning_rate)
             return optimizer.minimize(loss, global_step=self.global_step)
 
@@ -311,10 +313,10 @@ def evaluate_test_set(model, sess, test_data, test_labels, train_step, summary_w
     print('#'*80)
     summary_writer.add_summary(summary, train_step)
 
-    mse = error_description_df['mse']['mean']
+    log_loss = error_description_df['log_loss']['mean']
 
-    if mse < model.lowest_mse:
-        model.lowest_mse = mse
+    if log_loss < model.lowest_log_loss:
+        model.lowest_log_loss = log_loss
         model.best_step = train_step
         model.save_info(LOG_DIR, RUN_NAME + '.txt')
         model.checkpoint.save(sess, CHECKPOINT_DIR, global_step=train_step)
@@ -337,6 +339,8 @@ def main(embedding_name):
 
     model = Model(RUN_NAME, sequence_length, output_size,
                   vocab_size=vocab_size, embedding_size=embedding_size, embedding_name=embedding_name)
+
+    model.info = 'log loss optimization'
 
     print(model.get_info())
     model.save_info(LOG_DIR, RUN_NAME + '.txt')
