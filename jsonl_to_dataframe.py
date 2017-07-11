@@ -81,8 +81,8 @@ def negate(x):
 
 @info
 def instances_to_labels(path_to_labels, data_dir, file_prefix):
-    df_truth = get_dataframe_from_jsonl(path_to_labels)['truthMean']
-    df_truth = df_truth.to_frame()
+    df_truth = get_dataframe_from_jsonl(path_to_labels)
+    df_truth = df_truth.ix[:, 'truthMean'].to_frame()
     df_truth['negTruthMean'] = df_truth.apply(lambda x: negate(x), axis=1)
     df_truth.to_pickle(data_dir + file_prefix + '_labels.pickle')
 
