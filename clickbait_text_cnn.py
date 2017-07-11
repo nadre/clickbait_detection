@@ -6,7 +6,7 @@ import datetime
 import os
 import name_gen as ng
 import gensim
-np.random.seed(686)
+np.random.seed(1000)
 
 DTYPE = 'float32'
 RUN_NAME = ng.get_name()
@@ -58,7 +58,7 @@ class Model:
         self.dropout_keep_prob = dropout_keep_prob
         self.beta = beta
 
-        self.info = ''
+        self.info = info
 
         self.lowest_log_loss = 9e10
         self.best_step = 0
@@ -229,17 +229,23 @@ def summarize_variable(name_scope, var):
         tf.summary.histogram('histogram', var)
 
 
-def get_batch(x, y, batch_size, step, num_samples):
-    assert batch_size < num_samples
+def get_random_batch(batch_size, data, labels):
+    assert batch_size < data.shape[0]
+    data_batch = data.sample(batch_size)
+    label_batch = labels.loc[data_batch.index]
+    return data_batch, label_batch
 
+
+def get_batch(data, labels, batch_size, step):
+    num_samples = data.shape[0]
+    assert batch_size < num_samples
     start = step * batch_size
     if start > (num_samples - 1):
         start %= num_samples
     end = start + batch_size
     if end > (num_samples - 1):
         end = num_samples - 1
-
-    return x[start:end], y[start:end]
+    return data[start:end], labels[start:end]
 
 
 def get_vocab_and_pretrained_embedding(path_to_model, binary=False):
@@ -277,8 +283,9 @@ def evaluate_test_set(model, sess, test_data, test_labels, train_step, summary_w
         'l2_loss': []
     }
     for test_step in range(num_test_steps):
-        test_data_batch, test_label_batch = get_batch(test_data, test_labels, model.test_batch_size,
-                                                      test_step, test_set_size)
+        test_data_batch, test_label_batch = get_batch(data=test_data, labels=test_labels,
+                                                      batch_size=model.test_batch_size, step=test_step)
+
         mse, log_loss, l2_loss, summary = sess.run([
             model.mse_mean,
             model.log_loss_mean,
@@ -352,8 +359,8 @@ def main(embedding_name):
 
     print('started running: ' + RUN_NAME)
     for train_step in range(100000):
-        train_data_batch, train_label_batch = get_batch(train_data, train_labels, model.train_batch_size,
-                                                        train_step, num_instances)
+        train_data_batch, train_label_batch = get_random_batch(model.train_batch_size,
+                                                               data=train_data, labels=train_labels)
 
         sess.run([model.optimize], feed_dict={model._sequence_placeholder: train_data_batch,
                                               model._target_placeholder: train_label_batch,
