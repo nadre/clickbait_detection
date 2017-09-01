@@ -81,8 +81,8 @@ def negate(x):
 
 @info
 def instances_to_labels(path_to_labels, data_dir, file_prefix):
-    df_truth = get_dataframe_from_jsonl(path_to_labels)['truthMean']
-    df_truth = df_truth.to_frame()
+    df_truth = get_dataframe_from_jsonl(path_to_labels)
+    df_truth = df_truth.ix[:, 'truthMean'].to_frame()
     df_truth['negTruthMean'] = df_truth.apply(lambda x: negate(x), axis=1)
     df_truth.to_pickle(data_dir + file_prefix + '_labels.pickle')
 
@@ -92,10 +92,10 @@ def main():
     path_to_instances = data_dir + 'all_instances.jsonl'
     path_to_labels = data_dir + 'all_truth.jsonl'
     file_prefix = 'googlenews300'
-    path_to_model = data_dir + 'googlenews300.bin'
-    df_tokens = instances_to_token(path_to_instances, data_dir, file_prefix)
-    vocab, _ = get_vocab_and_pretrained_embedding(path_to_model)
-    tokens_to_indices(df_tokens, data_dir, file_prefix, vocab)
+    # path_to_model = data_dir + 'googlenews300.bin'
+    # df_tokens = instances_to_token(path_to_instances, data_dir, file_prefix)
+    # vocab, _ = get_vocab_and_pretrained_embedding(path_to_model)
+    # tokens_to_indices(df_tokens, data_dir, file_prefix, vocab)
     instances_to_labels(path_to_labels, data_dir, file_prefix)
 
 if __name__ == '__main__':

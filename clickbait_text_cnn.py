@@ -1,12 +1,17 @@
 import tensorflow as tf
+from tensorflow.python.client import device_lib
 import numpy as np
 import pandas as pd
 import functools
 import datetime
-import os
 import name_gen as ng
 import gensim
-np.random.seed(686)
+
+import os
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"] = "6,7"
+
+np.random.seed(1338)
 
 DTYPE = 'float32'
 RUN_NAME = ng.get_name()
@@ -38,7 +43,7 @@ def lazy_property(function):
 
 class Model:
     def __init__(self, name, sequence_length, output_size, vocab_size=int(3e6), train_batch_size=100, test_batch_size=100,
-                 embedding_size=300, num_filters=64, max_filter_length=15, beta=0.001, dropout_keep_prob=0.5,
+                 embedding_size=300, num_filters=64, max_filter_length=15, beta=0.005, dropout_keep_prob=0.75,
                  embedding_name='unknown', learning_rate=0.05, info=''):
 
         self.name = name
@@ -58,13 +63,17 @@ class Model:
         self.dropout_keep_prob = dropout_keep_prob
         self.beta = beta
 
-        self.info = ''
+        self.info = info
 
         self.lowest_log_loss = 9e10
         self.best_step = 0
 
-        self._sequence_placeholder = tf.placeholder(tf.int32, shape=(None, self.sequence_length))
-        self._target_placeholder = tf.placeholder(tf.float32, shape=(None, self.output_size))
+        self._sequence_placeholder = tf.placeholder(tf.int32, shape=(None, self.sequence_length),
+                                                    name='sequence_placeholder')
+
+        self._target_placeholder = tf.placeholder(tf.float32, shape=(None, self.output_size),
+                                                  name='target_placeholder')
+
         self._dropout_keep_prob_placeholder = tf.placeholder(tf.float32, name="dropout_keep_prob")
 
         self.embedding_placeholder
@@ -106,7 +115,21 @@ class Model:
         return softmax_out
 
     @lazy_property
-    def convolution_and_max_pooling(self):
+    def predict_one(self, placeholder):
+        pooling = self.convolution_and_max_pooling(placeholder)
+        weights, bias = self.output_weights_and_bias
+        activation = tf.matmul(pooling, weights) + bias
+        softmax_out = tf.nn.softmax(activation)
+        return softmax_out, tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+
+    @lazy_property
+    def convolution_and_max_pooling(self, placeholder=None):
+
+        if placeholder is None:
+            embedding_lookup = self.embedding_lookup
+        else:
+            embedding_lookup = self.embedding_lookup(placeholder)
+
         pooled_outputs = []
         for i, filter_size in enumerate(self.filter_sizes):
             with tf.name_scope('convolution-maxpool-%s' % filter_size):
@@ -116,7 +139,7 @@ class Model:
                 W = tf.Variable(tf.truncated_normal(filter_shape, stddev=0.1), name='W')
                 b = tf.Variable(tf.constant(0.1, shape=[self.num_filters]), name='b')
                 conv = tf.nn.conv2d(
-                    self.embedding_lookup,
+                    embedding_lookup,
                     W,
                     strides=[1, 1, 1, 1],
                     padding='VALID',
@@ -154,10 +177,16 @@ class Model:
         return weights, bias
 
     @lazy_property
-    def embedding_lookup(self):
+    def embedding_lookup(self, placeholder=None):
+
+        if placeholder is None:
+            sequence_placeholder = self._sequence_placeholder
+        else:
+            sequence_placeholder = placeholder
+
         with tf.device('/:cpu0'):
             embedding = tf.Variable(self.embedding_placeholder, trainable=False)
-            embedding_lookup = tf.nn.embedding_lookup(embedding, self._sequence_placeholder)
+            embedding_lookup = tf.nn.embedding_lookup(embedding, sequence_placeholder)
             embedding_lookup_expanded = tf.expand_dims(embedding_lookup, -1)
             return embedding_lookup_expanded
 
@@ -167,14 +196,15 @@ class Model:
         https://stackoverflow.com/questions/35394103/initializing-tensorflow-variable-with-an-array-larger-than-2gb
         :return:
         """
-        return tf.placeholder(tf.float32, shape=(self.vocab_size, self.embedding_size))
+        return tf.placeholder(tf.float32, shape=(self.vocab_size, self.embedding_size),
+                              name='embedding_placeholder')
 
     @lazy_property
     def optimize(self):
         with tf.name_scope('train'):
             loss = self.log_loss + self.beta * self.l2_loss
             optimizer = tf.train.AdagradOptimizer(self.learning_rate)
-            return optimizer.minimize(loss, global_step=self.global_step)
+            return optimizer.minimize(loss)
 
     @lazy_property
     def global_step(self):
@@ -229,17 +259,23 @@ def summarize_variable(name_scope, var):
         tf.summary.histogram('histogram', var)
 
 
-def get_batch(x, y, batch_size, step, num_samples):
-    assert batch_size < num_samples
+def get_random_batch(batch_size, data, labels):
+    assert batch_size < data.shape[0]
+    data_batch = data.sample(batch_size)
+    label_batch = labels.loc[data_batch.index]
+    return data_batch, label_batch
 
+
+def get_batch(data, labels, batch_size, step):
+    num_samples = data.shape[0]
+    assert batch_size < num_samples
     start = step * batch_size
     if start > (num_samples - 1):
         start %= num_samples
     end = start + batch_size
     if end > (num_samples - 1):
         end = num_samples - 1
-
-    return x[start:end], y[start:end]
+    return data[start:end], labels[start:end]
 
 
 def get_vocab_and_pretrained_embedding(path_to_model, binary=False):
@@ -277,8 +313,9 @@ def evaluate_test_set(model, sess, test_data, test_labels, train_step, summary_w
         'l2_loss': []
     }
     for test_step in range(num_test_steps):
-        test_data_batch, test_label_batch = get_batch(test_data, test_labels, model.test_batch_size,
-                                                      test_step, test_set_size)
+        test_data_batch, test_label_batch = get_batch(data=test_data, labels=test_labels,
+                                                      batch_size=model.test_batch_size, step=test_step)
+
         mse, log_loss, l2_loss, summary = sess.run([
             model.mse_mean,
             model.log_loss_mean,
@@ -319,10 +356,12 @@ def evaluate_test_set(model, sess, test_data, test_labels, train_step, summary_w
         model.lowest_log_loss = log_loss
         model.best_step = train_step
         model.save_info(LOG_DIR, RUN_NAME + '.txt')
-        model.checkpoint.save(sess, CHECKPOINT_DIR, global_step=train_step)
+        model.checkpoint.save(sess=sess, save_path=CHECKPOINT_DIR+'step_{}.ckpt'.format(train_step))
 
 
 def main(embedding_name):
+    print(device_lib.list_local_devices())
+
     tokens, truth = load_data(embedding_name)
     num_instances, sequence_length = tokens.shape
     _, output_size = truth.shape
@@ -352,14 +391,15 @@ def main(embedding_name):
 
     print('started running: ' + RUN_NAME)
     for train_step in range(100000):
-        train_data_batch, train_label_batch = get_batch(train_data, train_labels, model.train_batch_size,
-                                                        train_step, num_instances)
+        train_data_batch, train_label_batch = get_random_batch(model.train_batch_size,
+                                                               data=train_data, labels=train_labels)
 
         sess.run([model.optimize], feed_dict={model._sequence_placeholder: train_data_batch,
                                               model._target_placeholder: train_label_batch,
                                               model._dropout_keep_prob_placeholder: model.dropout_keep_prob})
 
-        if train_step != 0 and train_step % 500 == 0:
+        # if train_step != 0 and train_step % 500 == 0:
+        if train_step % 500 == 0:
             evaluate_test_set(model, sess, test_data, test_labels, train_step, summary_writer)
 
 
