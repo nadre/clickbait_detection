@@ -39,7 +39,9 @@ def get_dataframe_from_jsonl(path):
         instance = json.loads(line)
         data.append(instance)
         index.append(instance['id'])
-    return pd.DataFrame(data=data, index=index)
+    df = pd.DataFrame(data=data, index=index)
+    df.sort_index(inplace=True)
+    return df
 
 
 @info
