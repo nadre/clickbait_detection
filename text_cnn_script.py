@@ -9,9 +9,9 @@ import gensim
 
 import os
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
-os.environ["CUDA_VISIBLE_DEVICES"] = "6,7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "4,5"
 
-np.random.seed(3333)
+np.random.seed(5555)
 
 DTYPE = 'float32'
 RUN_NAME = ng.get_name()
@@ -27,10 +27,10 @@ TEST_BATCH_SIZE=100
 EMBEDDING_SIZE=300
 NUM_FILTERS=64
 MAX_FILTER_LENGTH=15
-BETA=0.01
+BETA=0.005
 DROPOUT_KEEP_PROB=0.66
 EMBEDDING_NAME='unknown'
-LEARNING_RATE=0.05
+LEARNING_RATE=0.03
 INFO=''
 DATE = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
 EMBEDDING_NAME = 'googlenews300'
@@ -141,7 +141,6 @@ def main():
 
     print('started running: ' + RUN_NAME)
     lowest_mse = 9e10
-    best_step = 0
     for train_step in range(100000):
 
         train_data_batch, train_label_batch = get_random_batch(TRAIN_BATCH_SIZE, data=train_data, labels=train_labels)
@@ -151,7 +150,7 @@ def main():
                                         dropout_keep_prob_placeholder: DROPOUT_KEEP_PROB})
 
         # if train_step != 0 and train_step % 500 == 0:
-        if train_step % 500 == 0:
+        if train_step % 200 == 0:
             num_test_steps = int(test_set_size/TEST_BATCH_SIZE) + 1
             errors = {
                 'mse': [],
@@ -200,13 +199,13 @@ def main():
 
             if test_mse < lowest_mse:
                 print('Saving new checkpoint step:{}\nnew best: {}\nold_best: {}'.format(train_step, test_mse, lowest_mse))
-                best_step = train_step
                 lowest_mse = test_mse
                 saver.save(sess=sess, save_path=CHECKPOINT_DIR+'step_{}'.format(train_step))
 
 ##############################################################################
 ##############################################################################
 ##############################################################################
+
 
 def summarize_variable(name_scope, var):
     """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
@@ -219,6 +218,7 @@ def summarize_variable(name_scope, var):
         tf.summary.scalar('max', tf.reduce_max(var))
         tf.summary.scalar('min', tf.reduce_min(var))
         tf.summary.histogram('histogram', var)
+
 
 def get_random_batch(batch_size, data, labels):
     assert batch_size < data.shape[0]
