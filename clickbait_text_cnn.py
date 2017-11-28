@@ -6,19 +6,18 @@ import functools
 import datetime
 import name_gen as ng
 import gensim
-<<<<<<< HEAD
 
 import os
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "6,7"
 
 np.random.seed(1338)
 
 DTYPE = 'float32'
 RUN_NAME = ng.get_name()
-LOG_DIR = '/home/xuri3814/data/clickbait/cnn/runs/logs/{}/'.format(RUN_NAME)
-CHECKPOINT_DIR = '/home/xuri3814/data/clickbait/cnn/runs/checkpoints/{}/'.format(RUN_NAME)
-DATA_DIR = '/home/xuri3814/data/clickbait/'
+LOG_DIR = 'logs/{}/'.format(RUN_NAME)
+CHECKPOINT_DIR = 'checkpoints/{}/'.format(RUN_NAME)
+DATA_DIR = 'data/'
 
 
 def lazy_property(function):
