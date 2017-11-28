@@ -15,9 +15,9 @@ np.random.seed(5555)
 
 DTYPE = 'float32'
 RUN_NAME = ng.get_name()
-LOG_DIR = '/home/xuri3814/data/clickbait/cnn/runs/logs/{}/'.format(RUN_NAME)
-CHECKPOINT_DIR = '/home/xuri3814/data/clickbait/cnn/runs/checkpoints/{}/'.format(RUN_NAME)
-DATA_DIR = '/home/xuri3814/data/clickbait/'
+LOG_DIR = 'logs/{}/'.format(RUN_NAME)
+CHECKPOINT_DIR = 'checkpoints/{}/'.format(RUN_NAME)
+DATA_DIR = 'data/clickbait/'
 
 SEQUENCE_LENGTH = 27
 OUTPUT_SIZE = 2
